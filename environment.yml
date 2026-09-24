@@ -5,6 +5,14 @@ channels:
 dependencies:
   - pip=24.2
   - python=3.12.8
+  - ipykernel=7.3.0
+  - ipython=9.17.1
+  - numpy=2.5.3
+  - pandas=3.0.6
   - pip:
       - requests==2.32.4
       - seaborn==0.13.2
+      - rdkit==2026.3.6
+      - scikit-learn==1.9.1
+      - torch==2.14.0
+      - torchvision==0.29.0
