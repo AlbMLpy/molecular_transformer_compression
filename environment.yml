@@ -1,0 +1,10 @@
+name: mat_compress_env
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - pip=24.2
+  - python=3.12.8
+  - pip:
+      - requests==2.32.4
+      - seaborn==0.13.2
