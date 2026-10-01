@@ -37,33 +37,48 @@ def load_data_from_df(
     fingerprints: bool = False,
     radius: int = 2,
 ) -> tuple[list, list] | tuple[np.ndarray, np.ndarray]:
-    """Load and featurize data stored in a CSV file.
+    """Load and featurize molecular data from a CSV file.
 
-    Args:
-        dataset_path (str):
-            A path to the CSV file containing the data.
-            It should have two columns: the first one contains SMILES
-            strings of the compounds; the second one contains labels.
-        add_dummy_node (bool):
-            If True, a dummy node will be added to the molecular graph.
-            Defaults to True.
-        one_hot_formal_charge (bool):
-            If True, formal charges on atoms are one-hot encoded.
-            Defaults to False.
-        use_data_saving (bool):
-            If True, saved features will be loaded from the dataset directory;
-            if no feature file is present, the features will be saved after
-            calculations. Defaults to True.
-        fingerprints (bool):
-            If True, compute Morgan fingerprint features for input dataset.
-            Defaults to False.
-        radius (int):
-            The bond radius of the local substructure. Defaults to 2.
+    The input CSV is expected to contain two columns: SMILES strings and
+    corresponding target labels. Depending on ``fingerprints``, the
+    function either generates MAT molecular graph features or Morgan
+    fingerprints.
 
-    Returns:
-        A tuple (X, y) in which X is a list of graph descriptors
-        (node features, adjacency matrices, distance matrices),
-        and y is a list of the corresponding labels.
+    Parameters
+    ----------
+    dataset_path : str
+        Path to the CSV file containing the molecular data. The first column
+        must contain SMILES strings and the second column must contain the
+        corresponding target labels.
+    add_dummy_node : bool, optional
+        If ``True``, add a dummy node to each molecular graph. This is used
+        by MAT to support molecular-level aggregation. Defaults to ``True``.
+    one_hot_formal_charge : bool, optional
+        If ``True``, encode atomic formal charges using one-hot encoding.
+        Otherwise, formal charge is stored as a numerical feature.
+        Defaults to ``False``.
+    use_data_saving : bool, optional
+        If ``True``, load previously computed features from the dataset
+        directory when available. If no cached features are found, compute
+        the features and save them for subsequent runs. Defaults to ``True``.
+    fingerprints : bool, optional
+        If ``True``, generate Morgan fingerprints instead of MAT graph
+        features. Defaults to ``False``.
+    radius : int, optional
+        Radius of the local molecular environment used to generate Morgan
+        fingerprints. Only used when ``fingerprints=True``. Defaults to ``2``.
+
+    Returns
+    -------
+    tuple[list, list] or tuple[np.ndarray, np.ndarray]
+        If ``fingerprints=False``, returns ``(X, y)`` where ``X`` is a list
+        of molecular graph features. Each molecule is represented by a tuple
+        of node features, adjacency matrix, and distance matrix, and ``y``
+        contains the corresponding labels.
+
+        If ``fingerprints=True``, returns ``(X, y)`` as NumPy arrays, where
+        ``X`` contains the Morgan fingerprint vectors and ``y`` contains the
+        corresponding labels.
     """
     feat_stamp = (
         f'{"_dn" if add_dummy_node else ""}' 
@@ -109,24 +124,40 @@ def load_data_from_smiles(
     add_dummy_node: bool = True, 
     one_hot_formal_charge: bool = False,
 ) -> tuple[list, list]:
-    """Load and featurize data from lists of SMILES strings and labels.
+    """Load and featurize molecular data from SMILES strings and labels.
 
-    Args:
-        x_smiles (list[str]):
-            A list of SMILES strings.
-        labels (list[float]):
-            A list of the corresponding labels.
-        add_dummy_node (bool):
-            If True, a dummy node will be added to the molecular graph.
-            Defaults to True.
-        one_hot_formal_charge (bool):
-            If True, formal charges on atoms are one-hot encoded.
-            Defaults to False.
+    Each SMILES string is converted into a molecular graph representation
+    containing atom features, an adjacency matrix, and a distance matrix.
+    Molecules that cannot be parsed or featurized are skipped and a warning
+    is logged.
 
-    Returns:
-        A tuple (X, y) in which X is a list of graph descriptors
-        (node features, adjacency matrices, distance matrices),
-        and y is a list of the corresponding labels.
+    Parameters
+    ----------
+    x_smiles : list[str]
+        List of SMILES strings representing the molecules.
+    labels : list[float]
+        List of target values corresponding to the SMILES strings. The
+        ordering must match ``x_smiles``.
+    add_dummy_node : bool, optional
+        If ``True``, add a dummy node to each molecular graph. This is used
+        by MAT for molecular-level representation and aggregation.
+        Defaults to ``True``.
+    one_hot_formal_charge : bool, optional
+        If ``True``, encode atomic formal charges using one-hot encoding.
+        Otherwise, formal charge is stored as a numerical feature.
+        Defaults to ``False``.
+
+    Returns
+    -------
+    tuple[list, list]
+        A tuple ``(X, y)`` where ``X`` is a list of molecular graph
+        representations. Each molecule is represented by:
+
+        - node features,
+        - adjacency matrix,
+        - pairwise distance matrix.
+
+        ``y`` is a list containing the corresponding target values.
     """
     x_all, y_all = [], []
     for smiles, label in zip(x_smiles, labels):
@@ -168,19 +199,42 @@ def featurize_mol(
     add_dummy_node: bool, 
     one_hot_formal_charge: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Featurize molecule.
+    """Convert an RDKit molecule into MAT molecular graph features.
 
-    Args:
-        mol (rdchem.Mol): 
-            An RDKit Mol object.
-        add_dummy_node (bool): 
-            If True, a dummy node will be added to the molecular graph.
-        one_hot_formal_charge (bool): 
-            If True, formal charges on atoms are one-hot encoded.
+    The molecular graph representation consists of atom-level features,
+    a binary adjacency matrix describing molecular connectivity, and a
+    pairwise distance matrix computed from the molecule's 3D conformer.
 
-    Returns:
-        A tuple of molecular graph descriptors 
-        (node features, adjacency matrix, distance matrix).
+    Parameters
+    ----------
+    mol : rdchem.Mol
+        RDKit molecule to featurize. The molecule is expected to have a
+        conformer containing atomic 3D coordinates.
+    add_dummy_node : bool
+        If ``True``, add a dummy node to the molecular graph. The dummy
+        node is used by MAT for molecular-level representation and
+        aggregation.
+    one_hot_formal_charge : bool
+        If ``True``, encode atomic formal charges using one-hot encoding.
+        Otherwise, formal charge is stored as a numerical feature.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        A tuple containing:
+
+        - ``node_features`` : np.ndarray
+            Atom-level feature matrix with shape
+            ``(n_atoms, n_features)``.
+        - ``adjacency_matrix`` : np.ndarray
+            Molecular connectivity matrix with shape
+            ``(n_atoms, n_atoms)``.
+        - ``distance_matrix`` : np.ndarray
+            Pairwise Euclidean distance matrix derived from the 3D
+            atomic coordinates, with shape ``(n_atoms, n_atoms)``.
+
+        If ``add_dummy_node=True``, each matrix includes the additional
+        dummy node.
     """
     node_features = np.array(
         [
@@ -226,29 +280,36 @@ def featurize_mol(
 
 
 def get_atom_features(atom, one_hot_formal_charge: bool = True) -> np.ndarray:
-    """Calculate atom features.
+    """Extract atom-level features from an RDKit atom.
 
-    Args:
-        atom (rdchem.Atom): 
-            An RDKit Atom object.
-        one_hot_formal_charge (bool): 
-            If True, formal charges on atoms are one-hot encoded.
+    The feature vector encodes the atom's chemical properties, including
+    atomic number, number of neighboring atoms, total number of hydrogens,
+    formal charge, ring membership, and aromaticity.
 
-    Returns:
-        A 1-dimensional array (ndarray) of atom features.
+    Parameters
+    ----------
+    atom : rdchem.Atom
+        RDKit atom from which the features are extracted.
+    one_hot_formal_charge : bool, optional
+        If ``True``, encode the formal charge using one-hot encoding.
+        Otherwise, store the formal charge as a numerical value.
+        Defaults to ``True``.
+
+    Returns
+    -------
+    np.ndarray
+        One-dimensional NumPy array containing the atom-level features.
+        The feature vector is stored with ``float32`` precision.
     """
     attributes = []
-
     attributes += one_hot_vector(
         atom.GetAtomicNum(),
         [5, 6, 7, 8, 9, 15, 16, 17, 35, 53, 999]
     )
-
     attributes += one_hot_vector(
         len(atom.GetNeighbors()),
         [0, 1, 2, 3, 4, 5]
     )
-
     attributes += one_hot_vector(
         atom.GetTotalNumHs(),
         [0, 1, 2, 3, 4]
@@ -276,9 +337,33 @@ def one_hot_vector(val, lst):
 
 
 class Molecule:
-    """
-        Class that represents a train/validation/test datum
-        - self.label: 0 neg, 1 pos -1 missing for different target.
+    """Container for a single molecular graph and its target value.
+
+    Stores the molecular features required by MAT together with the
+    corresponding target label and dataset index.
+
+    Parameters
+    ----------
+    x : tuple[np.ndarray, np.ndarray, np.ndarray]
+        Molecular graph representation containing node features,
+        adjacency matrix, and pairwise distance matrix.
+    y : float or np.ndarray
+        Target value associated with the molecule.
+    index : int
+        Original index of the molecule in the dataset.
+
+    Attributes
+    ----------
+    node_features : np.ndarray
+        Atom-level feature matrix.
+    adjacency_matrix : np.ndarray
+        Molecular connectivity matrix.
+    distance_matrix : np.ndarray
+        Pairwise distance matrix derived from the molecular conformer.
+    y : float or np.ndarray
+        Target value for the molecule.
+    index : int
+        Original dataset index of the molecule.
     """
 
     def __init__(self, x, y, index):
@@ -295,46 +380,118 @@ class MolDataset(Dataset):
     for PyTorch. Note that this class inherits torch.utils.data.Dataset.
     """
 
-    def __init__(self, data_list):
-        """
-        @param data_list: list of Molecule objects
-        """
+    """PyTorch dataset for storing and accessing molecular graph data.
+
+    This dataset wraps a list of :class:`Molecule` objects and provides
+    the interface required by ``torch.utils.data.Dataset``. It supports
+    both individual molecule access and slicing.
+
+    Parameters
+    ----------
+    data_list : list[Molecule]
+        List of ``Molecule`` objects containing the molecular features
+        and corresponding target values.
+
+    Notes
+    -----
+    Indexing with an integer returns a single ``Molecule`` object.
+    Slicing returns a new ``MolDataset`` containing the selected molecules.
+    """
+
+    def __init__(self, data_list: list[Molecule]):
         self.data_list = data_list
 
     def __len__(self):
+        """Return the number of molecules in the dataset."""
         return len(self.data_list)
 
     def __getitem__(self, key):
+        """Return a molecule or a subset of the dataset.
+
+        Parameters
+        ----------
+        key : int or slice
+            Integer index for a single molecule or slice for a subset.
+
+        Returns
+        -------
+        Molecule or MolDataset
+            A single ``Molecule`` for integer indexing, or a new
+            ``MolDataset`` for slicing.
+        """
         if type(key) == slice:
             return MolDataset(self.data_list[key])
         return self.data_list[key]
 
 
-def pad_array(array, shape, dtype=np.float32):
-    """Pad a 2-dimensional array with zeros.
+def pad_array(
+    array: np.ndarray, 
+    shape: tuple[int, int], 
+    dtype=np.float32
+) -> np.ndarray:
+    """Pad a two-dimensional array with zeros to a specified shape.
 
-    Args:
-        array (ndarray): A 2-dimensional array to be padded.
-        shape (tuple[int]): The desired shape of the padded array.
-        dtype (data-type): The desired data-type for the array.
+    Parameters
+    ----------
+    array : np.ndarray
+        Two-dimensional array to be padded. Its dimensions must not exceed
+        the corresponding dimensions of ``shape``.
+    shape : tuple[int, int]
+        Desired shape of the output array.
+    dtype : data-type, optional
+        Data type of the padded array. Defaults to ``np.float32``.
 
-    Returns:
-        A 2-dimensional array of the given shape padded with zeros.
+    Returns
+    -------
+    np.ndarray
+        Zero-padded array with the specified shape and data type.
+
+    Raises
+    ------
+    ValueError
+        If ``array`` has more than two dimensions or its shape is larger
+        than the requested output shape.
     """
+    if array.ndim != 2:
+        raise ValueError(
+            f"Expected a 2-dimensional array, got {array.ndim} dimensions."
+        )
+
+    if array.shape[0] > shape[0] or array.shape[1] > shape[1]:
+        raise ValueError(
+            f"Array shape {array.shape} cannot be padded to {shape}."
+        )
+    
     padded_array = np.zeros(shape, dtype=dtype)
     padded_array[:array.shape[0], :array.shape[1]] = array
     return padded_array
 
 
 def mol_collate_func(batch: list[Molecule]) -> list:
-    """Create a padded batch of molecule features.
+    """Collate molecules into a padded batch for MAT.
 
-    Args:
-        batch (list[Molecule]): A batch of raw molecules.
+    Molecules may contain different numbers of atoms, so their node
+    features, adjacency matrices, and distance matrices are padded to the
+    maximum number of atoms in the batch. The resulting arrays are
+    converted to PyTorch tensors.
 
-    Returns:
-        A list of FloatTensors with padded molecule features:
-        adjacency matrices, node features, distance matrices, and labels.
+    Parameters
+    ----------
+    batch : list[Molecule]
+        List of :class:`Molecule` objects to collate into a batch.
+
+    Returns
+    -------
+    list[torch.FloatTensor]
+        A list containing four tensors in the following order:
+
+        - ``adjacency_matrix`` : Padded molecular adjacency matrices.
+        - ``node_features`` : Padded atom-level feature matrices.
+        - ``distance_matrix`` : Padded pairwise distance matrices.
+        - ``labels`` : Target values for each molecule in the batch.
+
+        The first three tensors are padded along their atom dimensions to
+        the maximum number of atoms in the batch.
     """
     adjacency_list, distance_list, features_list, labels = [], [], [], []
     max_size = 0
@@ -365,18 +522,35 @@ def mol_collate_func(batch: list[Molecule]) -> list:
     ]
 
 
-def construct_dataset(x_all, y_all):
-    """Construct a MolDataset object from the provided data.
+def construct_dataset(x_all, y_all) -> MolDataset:
+    """Construct a molecular dataset from features and target values.
 
-    Args:
-        x_all (list): A list of molecule features.
-        y_all (list): A list of the corresponding labels.
+    Each pair of molecular features and target values is wrapped in a
+    :class:`Molecule` object and assigned its corresponding index in the
+    input data.
 
-    Returns:
-        A MolDataset object filled with the provided data.
+    Parameters
+    ----------
+    x_all : list
+        List of molecular graph representations. Each element should
+        contain node features, an adjacency matrix, and a distance matrix.
+    y_all : list
+        List of target values corresponding to the molecular features in
+        ``x_all``. The ordering must match ``x_all``.
+
+    Returns
+    -------
+    MolDataset
+        Dataset containing the constructed :class:`Molecule` objects.
+
+    Notes
+    -----
+    The inputs ``x_all`` and ``y_all`` should have matching lengths.
     """
-    output = [Molecule(data[0], data[1], i)
-              for i, data in enumerate(zip(x_all, y_all))]
+    output = [
+        Molecule(data[0], data[1], i)
+        for i, data in enumerate(zip(x_all, y_all))
+    ]
     return MolDataset(output)
 
 
@@ -386,21 +560,31 @@ def construct_loader(
     batch_size: int, 
     shuffle: bool = True,
 ) -> torch.utils.data.DataLoader:
-    """Construct a data loader for the provided data.
+    """Construct a DataLoader for molecular graph data.
 
-    Args:
-        x (list): 
-            A list of molecule features.
-        y (list): 
-            A list of the corresponding labels.
-        batch_size (int): 
-            The batch size.
-        shuffle (bool): 
-            If True the data will be loaded in a random order. 
-            Defaults to True.
+    The input molecular features and target values are first wrapped in a
+    :class:`MolDataset`. Batches are collated using :func:`mol_collate_func`,
+    which pads molecules with different numbers of atoms to a common size.
 
-    Returns:
-        A DataLoader object that yields batches of padded molecule features.
+    Parameters
+    ----------
+    x : list
+        List of molecular graph representations. Each element should
+        contain node features, an adjacency matrix, and a distance matrix.
+    y : list
+        List of target values corresponding to the molecules in ``x``.
+        The ordering must match ``x``.
+    batch_size : int
+        Number of molecules to include in each batch.
+    shuffle : bool, optional
+        If ``True``, shuffle the dataset before creating batches.
+        Defaults to ``True``.
+
+    Returns
+    -------
+    torch.utils.data.DataLoader
+        Data loader that yields padded batches of molecular features and
+        corresponding target values.
     """
     data_set = construct_dataset(x, y)
     return torch.utils.data.DataLoader(
