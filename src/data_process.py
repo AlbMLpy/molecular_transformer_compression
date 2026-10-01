@@ -30,47 +30,72 @@ DoubleTensor = torch.cuda.DoubleTensor if use_cuda else torch.DoubleTensor
 
 
 def load_data_from_df(
-    dataset_path, 
-    add_dummy_node=True, 
-    one_hot_formal_charge=False, 
-    use_data_saving=True,
-):
+    dataset_path: str, 
+    add_dummy_node: bool = True, 
+    one_hot_formal_charge: bool = False, 
+    use_data_saving: bool = True,
+    fingerprints: bool = False,
+    radius: int = 2,
+) -> tuple[list, list] | tuple[np.ndarray, np.ndarray]:
     """Load and featurize data stored in a CSV file.
 
     Args:
-        dataset_path (str): A path to the CSV file containing the data. It should have two columns:
-                            the first one contains SMILES strings of the compounds,
-                            the second one contains labels.
-        add_dummy_node (bool): If True, a dummy node will be added to the molecular graph. Defaults to True.
-        one_hot_formal_charge (bool): If True, formal charges on atoms are one-hot encoded. Defaults to False.
-        use_data_saving (bool): If True, saved features will be loaded from the dataset directory; if no feature file
-                                is present, the features will be saved after calculations. Defaults to True.
+        dataset_path (str):
+            A path to the CSV file containing the data.
+            It should have two columns: the first one contains SMILES
+            strings of the compounds; the second one contains labels.
+        add_dummy_node (bool):
+            If True, a dummy node will be added to the molecular graph.
+            Defaults to True.
+        one_hot_formal_charge (bool):
+            If True, formal charges on atoms are one-hot encoded.
+            Defaults to False.
+        use_data_saving (bool):
+            If True, saved features will be loaded from the dataset directory;
+            if no feature file is present, the features will be saved after
+            calculations. Defaults to True.
+        fingerprints (bool):
+            If True, compute Morgan fingerprint features for input dataset.
+            Defaults to False.
+        radius (int):
+            The bond radius of the local substructure. Defaults to 2.
 
     Returns:
-        A tuple (X, y) in which X is a list of graph descriptors (node features, adjacency matrices, distance matrices),
+        A tuple (X, y) in which X is a list of graph descriptors
+        (node features, adjacency matrices, distance matrices),
         and y is a list of the corresponding labels.
     """
-    feat_stamp = f'{"_dn" if add_dummy_node else ""}{"_ohfc" if one_hot_formal_charge else ""}'
+    feat_stamp = (
+        f'{"_dn" if add_dummy_node else ""}' 
+        + f'{"_ohfc" if one_hot_formal_charge else ""}'
+    )
+    feat_stamp = feat_stamp + "_fingerprints" if fingerprints else feat_stamp
     feature_path = dataset_path.replace('.csv', f'{feat_stamp}.p')
+    
     if use_data_saving and os.path.exists(feature_path):
         logging.info(f"Loading features stored at '{feature_path}'")
         x_all, y_all = pickle.load(open(feature_path, "rb"))
         return x_all, y_all
 
     data_df = pd.read_csv(dataset_path)
-
-    data_x = data_df.iloc[:, 0].values
-    data_y = data_df.iloc[:, 1].values
+    data_x, data_y = data_df.iloc[:, 0].values, data_df.iloc[:, 1].values
 
     if data_y.dtype == np.float64:
         data_y = data_y.astype(np.float32)
 
-    x_all, y_all = load_data_from_smiles(
-        data_x, 
-        data_y, 
-        add_dummy_node=add_dummy_node,
-        one_hot_formal_charge=one_hot_formal_charge,
-    )
+    if fingerprints:
+        x_all = np.stack(
+            [smiles_to_morgan(smiles, radius=radius) for smiles in data_x]
+        )
+        y_all = np.asarray(data_y)
+    else:
+        x_all, y_all = load_data_from_smiles(
+            data_x, 
+            data_y, 
+            add_dummy_node=add_dummy_node,
+            one_hot_formal_charge=one_hot_formal_charge,
+        )
+
     if use_data_saving and not os.path.exists(feature_path):
         logging.info(f"Saving features at '{feature_path}'")
         pickle.dump((x_all, y_all), open(feature_path, "wb"))
@@ -79,25 +104,31 @@ def load_data_from_df(
 
 
 def load_data_from_smiles(
-    x_smiles, 
-    labels, 
-    add_dummy_node=True, 
-    one_hot_formal_charge=False
-):
+    x_smiles: list[str], 
+    labels: list[float], 
+    add_dummy_node: bool = True, 
+    one_hot_formal_charge: bool = False,
+) -> tuple[list, list]:
     """Load and featurize data from lists of SMILES strings and labels.
 
     Args:
-        x_smiles (list[str]): A list of SMILES strings.
-        labels (list[float]): A list of the corresponding labels.
-        add_dummy_node (bool): If True, a dummy node will be added to the molecular graph. Defaults to True.
-        one_hot_formal_charge (bool): If True, formal charges on atoms are one-hot encoded. Defaults to False.
+        x_smiles (list[str]):
+            A list of SMILES strings.
+        labels (list[float]):
+            A list of the corresponding labels.
+        add_dummy_node (bool):
+            If True, a dummy node will be added to the molecular graph.
+            Defaults to True.
+        one_hot_formal_charge (bool):
+            If True, formal charges on atoms are one-hot encoded.
+            Defaults to False.
 
     Returns:
-        A tuple (X, y) in which X is a list of graph descriptors (node features, adjacency matrices, distance matrices),
+        A tuple (X, y) in which X is a list of graph descriptors
+        (node features, adjacency matrices, distance matrices),
         and y is a list of the corresponding labels.
     """
     x_all, y_all = [], []
-
     for smiles, label in zip(x_smiles, labels):
         try:
             mol = MolFromSmiles(smiles)
@@ -109,28 +140,54 @@ def load_data_from_smiles(
             except:
                 AllChem.Compute2DCoords(mol)
 
-            afm, adj, dist = featurize_mol(mol, add_dummy_node, one_hot_formal_charge)
+            afm, adj, dist = featurize_mol(
+                mol, add_dummy_node, one_hot_formal_charge
+            )
             x_all.append([afm, adj, dist])
             y_all.append([label])
         except ValueError as e:
-            logging.warning('the SMILES ({}) can not be converted to a graph.\nREASON: {}'.format(smiles, e))
-
+            msg_str = (
+                f'the SMILES ({smiles}) can not be '
+                + f'converted to a graph.\nREASON: {e}'
+            )
+            logging.warning(msg_str)
     return x_all, y_all
 
 
-def featurize_mol(mol, add_dummy_node, one_hot_formal_charge):
+def smiles_to_morgan(smiles: str, radius: int = 2) -> np.ndarray:
+    """Compute Morgan fingerprint features for a SMILES string."""
+    mol = MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError(f"Invalid SMILES: {smiles}")
+    fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=radius, nBits=2048)
+    return np.asarray(fp)
+
+
+def featurize_mol(
+    mol, 
+    add_dummy_node: bool, 
+    one_hot_formal_charge: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Featurize molecule.
 
     Args:
-        mol (rdchem.Mol): An RDKit Mol object.
-        add_dummy_node (bool): If True, a dummy node will be added to the molecular graph.
-        one_hot_formal_charge (bool): If True, formal charges on atoms are one-hot encoded.
+        mol (rdchem.Mol): 
+            An RDKit Mol object.
+        add_dummy_node (bool): 
+            If True, a dummy node will be added to the molecular graph.
+        one_hot_formal_charge (bool): 
+            If True, formal charges on atoms are one-hot encoded.
 
     Returns:
-        A tuple of molecular graph descriptors (node features, adjacency matrix, distance matrix).
+        A tuple of molecular graph descriptors 
+        (node features, adjacency matrix, distance matrix).
     """
-    node_features = np.array([get_atom_features(atom, one_hot_formal_charge)
-                              for atom in mol.GetAtoms()])
+    node_features = np.array(
+        [
+            get_atom_features(atom, one_hot_formal_charge) 
+            for atom in mol.GetAtoms()
+        ]
+    )
 
     adj_matrix = np.eye(mol.GetNumAtoms())
     for bond in mol.GetBonds():
@@ -139,8 +196,16 @@ def featurize_mol(mol, add_dummy_node, one_hot_formal_charge):
         adj_matrix[begin_atom, end_atom] = adj_matrix[end_atom, begin_atom] = 1
 
     conf = mol.GetConformer()
-    pos_matrix = np.array([[conf.GetAtomPosition(k).x, conf.GetAtomPosition(k).y, conf.GetAtomPosition(k).z]
-                           for k in range(mol.GetNumAtoms())])
+    pos_matrix = np.array(
+        [
+            [
+                conf.GetAtomPosition(k).x, 
+                conf.GetAtomPosition(k).y, 
+                conf.GetAtomPosition(k).z,
+            ]
+            for k in range(mol.GetNumAtoms())
+        ]
+    )
     dist_matrix = pairwise_distances(pos_matrix)
 
     if add_dummy_node:
@@ -160,12 +225,14 @@ def featurize_mol(mol, add_dummy_node, one_hot_formal_charge):
     return node_features, adj_matrix, dist_matrix
 
 
-def get_atom_features(atom, one_hot_formal_charge=True):
+def get_atom_features(atom, one_hot_formal_charge: bool = True) -> np.ndarray:
     """Calculate atom features.
 
     Args:
-        atom (rdchem.Atom): An RDKit Atom object.
-        one_hot_formal_charge (bool): If True, formal charges on atoms are one-hot encoded.
+        atom (rdchem.Atom): 
+            An RDKit Atom object.
+        one_hot_formal_charge (bool): 
+            If True, formal charges on atoms are one-hot encoded.
 
     Returns:
         A 1-dimensional array (ndarray) of atom features.
@@ -224,8 +291,8 @@ class Molecule:
 
 class MolDataset(Dataset):
     """
-    Class that represents a train/validation/test dataset that's readable for PyTorch
-    Note that this class inherits torch.utils.data.Dataset
+    Class that represents a train/validation/test dataset that's readable
+    for PyTorch. Note that this class inherits torch.utils.data.Dataset.
     """
 
     def __init__(self, data_list):
@@ -259,7 +326,7 @@ def pad_array(array, shape, dtype=np.float32):
     return padded_array
 
 
-def mol_collate_func(batch):
+def mol_collate_func(batch: list[Molecule]) -> list:
     """Create a padded batch of molecule features.
 
     Args:
@@ -269,9 +336,7 @@ def mol_collate_func(batch):
         A list of FloatTensors with padded molecule features:
         adjacency matrices, node features, distance matrices, and labels.
     """
-    adjacency_list, distance_list, features_list = [], [], []
-    labels = []
-
+    adjacency_list, distance_list, features_list, labels = [], [], [], []
     max_size = 0
     for molecule in batch:
         if type(molecule.y[0]) == np.ndarray:
@@ -282,11 +347,22 @@ def mol_collate_func(batch):
             max_size = molecule.adjacency_matrix.shape[0]
 
     for molecule in batch:
-        adjacency_list.append(pad_array(molecule.adjacency_matrix, (max_size, max_size)))
-        distance_list.append(pad_array(molecule.distance_matrix, (max_size, max_size)))
-        features_list.append(pad_array(molecule.node_features, (max_size, molecule.node_features.shape[1])))
-
-    return [FloatTensor(features) for features in (adjacency_list, features_list, distance_list, labels)]
+        adjacency_list.append(
+            pad_array(molecule.adjacency_matrix, (max_size, max_size))
+        )
+        distance_list.append(
+            pad_array(molecule.distance_matrix, (max_size, max_size))
+        )
+        features_list.append(
+            pad_array(
+                molecule.node_features, 
+                (max_size, molecule.node_features.shape[1])
+            )
+        )
+    return [
+        FloatTensor(features) 
+        for features in (adjacency_list, features_list, distance_list, labels)
+    ]
 
 
 def construct_dataset(x_all, y_all):
@@ -304,33 +380,44 @@ def construct_dataset(x_all, y_all):
     return MolDataset(output)
 
 
-def construct_loader(x, y, batch_size, shuffle=True):
+def construct_loader(
+    x: list, 
+    y: list, 
+    batch_size: int, 
+    shuffle: bool = True,
+) -> torch.utils.data.DataLoader:
     """Construct a data loader for the provided data.
 
     Args:
-        x (list): A list of molecule features.
-        y (list): A list of the corresponding labels.
-        batch_size (int): The batch size.
-        shuffle (bool): If True the data will be loaded in a random order. Defaults to True.
+        x (list): 
+            A list of molecule features.
+        y (list): 
+            A list of the corresponding labels.
+        batch_size (int): 
+            The batch size.
+        shuffle (bool): 
+            If True the data will be loaded in a random order. 
+            Defaults to True.
 
     Returns:
         A DataLoader object that yields batches of padded molecule features.
     """
     data_set = construct_dataset(x, y)
-    loader = torch.utils.data.DataLoader(dataset=data_set,
-                                         batch_size=batch_size,
-                                         collate_fn=mol_collate_func,
-                                         shuffle=shuffle)
-    return loader
+    return torch.utils.data.DataLoader(
+        dataset=data_set,
+        batch_size=batch_size,
+        collate_fn=mol_collate_func,
+        shuffle=shuffle,
+    )
 
 
 def random_split_indices(
-    n_samples,
-    train_ratio=0.8,
-    valid_ratio=0.1,
-    test_ratio=0.1,
-    seed=42,
-):
+    n_samples: int,
+    train_ratio: float = 0.8,
+    valid_ratio: float = 0.1,
+    test_ratio: float = 0.1,
+    seed: int = 42,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Generate random train/validation/test splits of dataset indices.
 
@@ -354,7 +441,7 @@ def random_split_indices(
     test_idx : np.ndarray
     """
     if not np.isclose(train_ratio + valid_ratio + test_ratio, 1.0):
-        raise ValueError("train_ratio + valid_ratio + test_ratio must equal 1.")
+        raise ValueError("train_ratio + valid_ratio + test_ratio must be 1.0")
 
     if n_samples <= 0:
         raise ValueError("n_samples must be positive.")
@@ -370,5 +457,4 @@ def random_split_indices(
     train_idx = indices[:n_train]
     valid_idx = indices[n_train:n_train + n_valid]
     test_idx = indices[n_train + n_valid:]
-
     return train_idx, valid_idx, test_idx
