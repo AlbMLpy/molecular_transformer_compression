@@ -58,17 +58,32 @@ def get_layer_names_linear(
     model: nn.Module, 
     target_layer: str,
 ) -> list[str]:
-    """Return names of Linear layers within the specified module type.
+    """Return names of Linear layers matching a target module name.
 
-    Args: 
-        target_layer: Module name to match, e.g. "self_attn", 
-            "feed_forward", or "src_embed".
+    The function searches all named submodules and returns the names of
+    modules that are instances of ``nn.Linear`` and whose full module name
+    contains ``target_layer`` as a substring.
+
+    For example, with ``target_layer="self_attn"``, this can return names
+    such as ``"encoder.layers.0.self_attn.linears.0"``.
+
+    Parameters
+    ----------
+    model : nn.Module
+        Model whose Linear layers should be searched.
+    target_layer : str
+        Substring used to identify the target module. Examples include
+        ``"self_attn"``, ``"feed_forward"``, and ``"src_embed"``.
+
+    Returns
+    -------
+    list[str]
+        Full module names of the matching ``nn.Linear`` layers.
     """
     names_list = []
     for name, layer in model.named_modules():
         if isinstance(layer, nn.Linear) and target_layer in name:
             names_list.append(name)
-            print(name, layer)
     return names_list
 
 
@@ -87,3 +102,11 @@ def replace_linear_layers(
         new_layer = conversion_fn(old_layer)
         setattr(parent, parts[-1], new_layer)
     return model
+
+
+def get_module(model: nn.Module, name: str) -> nn.Module:
+    """Return a nested module from its dot-separated name."""
+    module = model
+    for part in name.split("."):
+        module = getattr(module, part)
+    return module
