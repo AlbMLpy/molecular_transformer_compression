@@ -17,3 +17,4 @@ dependencies:
       - torch==2.14.0
       - torchvision==0.29.0
       - pytest==9.1.1
+      - tqdm==4.70.1
