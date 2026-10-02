@@ -1,11 +1,14 @@
 import copy
 import math
 import time
+from collections import defaultdict
 
 import torch
+import pandas as pd
 import torch.nn as nn
 
-from .metrics import count_parameters
+from .utils import get_layer_names, update_results_dict
+from .metrics import count_effective_parameters, count_parameter_categories
 
 
 def prepare_batch(batch, device):
@@ -56,7 +59,6 @@ def compute_rmse(sum_squared_error, n_samples):
     """Compute RMSE from accumulated squared error."""
     if n_samples == 0:
         raise ValueError("Cannot compute RMSE with zero samples.")
-
     return math.sqrt(sum_squared_error / n_samples)
 
 
@@ -69,33 +71,16 @@ def train_one_epoch(
 ):
     """Train the model for one epoch and return its RMSE."""
     model.train()
-
-    squared_error = 0.0
-    n_samples = 0
-
+    sq_error, n_samples = 0.0, 0
     for batch in data_loader:
-        output, y = forward_batch(
-            model,
-            batch,
-            device,
-        )
-
+        output, y = forward_batch(model, batch, device)
         loss = criterion(output, y)
-
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
-        squared_error += torch.sum(
-            (output.detach() - y) ** 2
-        ).item()
-
+        sq_error += torch.sum((output.detach() - y) ** 2).item()
         n_samples += y.numel()
-
-    return compute_rmse(
-        squared_error,
-        n_samples,
-    )
+    return compute_rmse(sq_error, n_samples)
 
 
 @torch.no_grad()
@@ -111,27 +96,12 @@ def evaluate_model(
         RMSE
     """
     model.eval()
-
-    squared_error = 0.0
-    n_samples = 0
-
+    squared_error, n_samples = 0.0, 0
     for batch in data_loader:
-        output, y = forward_batch(
-            model,
-            batch,
-            device,
-        )
-
-        squared_error += torch.sum(
-            (output - y) ** 2
-        ).item()
-
+        output, y = forward_batch(model, batch, device)
+        squared_error += torch.sum((output - y) ** 2).item()
         n_samples += y.numel()
-
-    return compute_rmse(
-        squared_error,
-        n_samples,
-    )
+    return compute_rmse(squared_error, n_samples)
 
 
 def save_best_state(model):
@@ -170,26 +140,16 @@ def train(
     The test set is intentionally not used here.
     """
     model = model.to(device)
-
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=lr,
         weight_decay=weight_decay,
     )
-
     criterion = nn.MSELoss()
-
-    history = {
-        "train_rmse": [],
-        "valid_rmse": [],
-    }
-
-    best_valid_rmse = float("inf")
-    best_epoch = 0
-    best_state = None
+    history = {"train_rmse": [], "valid_rmse": []}
+    best_valid_rmse, best_epoch, best_state = float("inf"), 0, None
 
     start_time = time.perf_counter()
-
     for epoch in range(1, epochs + 1):
         train_rmse = train_one_epoch(
             model=model,
@@ -198,13 +158,11 @@ def train(
             criterion=criterion,
             device=device,
         )
-
         valid_rmse = evaluate_model(
             model=model,
             data_loader=valid_loader,
             device=device,
         )
-
         history["train_rmse"].append(train_rmse)
         history["valid_rmse"].append(valid_rmse)
 
@@ -230,27 +188,41 @@ def train(
         ):
             break
 
-    training_time = (
-        time.perf_counter() - start_time
-    )
-
+    training_time = (time.perf_counter() - start_time)
     if best_state is None:
         raise RuntimeError(
             "No best model state was saved."
         )
-
     model.load_state_dict(best_state)
-
     return {
         "model": model,
         "best_valid_rmse": best_valid_rmse,
         "best_epoch": best_epoch,
-        "epochs_trained": len(
-            history["train_rmse"]
-        ),
+        "epochs_trained": len(history["train_rmse"]),
         "training_time": training_time,
         "history": history,
     }
+
+
+def get_params_count_df(
+    model: nn.Module, 
+    target_layers: list[str] = ["all"]
+) -> pd.DataFrame:
+    params_count_dict = defaultdict(list)
+    for target_layer in target_layers:
+        if target_layer == "all":
+            _counter = count_effective_parameters(model)
+        else:
+            _counter = count_effective_parameters(
+                model, get_layer_names(model, target_layer)
+            )
+        update_results_dict(
+            params_count_dict, target_layer=target_layer, **_counter,
+        )
+
+    pd.DataFrame(count_parameter_categories(model)).T
+    return pd.DataFrame(params_count_dict)
+
 
 def train_and_evaluate(
     model,
@@ -287,17 +259,10 @@ def train_and_evaluate(
         data_loader=test_loader,
         device=device,
     )
-
-    total_params, trainable_params = count_parameters(
-        model
+    params_count_df = get_params_count_df(
+        model, ["self_attn", "feed_forward", "src_embed", "all"],
     )
-
     results.update(
-        {
-            "test_rmse": test_rmse,
-            "total_params": total_params,
-            "trainable_params": trainable_params,
-        }
+        {"test_rmse": test_rmse, "params_df": params_count_df}
     )
-
     return results
