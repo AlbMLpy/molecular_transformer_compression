@@ -1,5 +1,7 @@
+import os
 import math
 import random
+from pathlib import Path
 from collections.abc import Callable
 
 import torch
@@ -110,3 +112,15 @@ def get_module(model: nn.Module, name: str) -> nn.Module:
     for part in name.split("."):
         module = getattr(module, part)
     return module
+
+
+def update_results_dict(res: dict, **kwargs) -> None:
+    for key, value in kwargs.items():
+        res[key].append(value)
+
+
+def create_dir_if_not_exists(directory: str) -> os.PathLike:
+    path = Path(directory)
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
+    return path
