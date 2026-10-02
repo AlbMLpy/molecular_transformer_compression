@@ -642,3 +642,30 @@ def random_split_indices(
     valid_idx = indices[n_train:n_train + n_valid]
     test_idx = indices[n_train + n_valid:]
     return train_idx, valid_idx, test_idx
+
+
+def load_split_data(
+    data_path: str, 
+    train_ratio: float = 0.8,
+    valid_ratio: float = 0.1,
+    test_ratio: float = 0.1,
+    split_seed: int = 42, 
+    fingerprints: bool = False,
+) -> tuple[tuple, tuple, tuple]:
+    X, y = load_data_from_df(data_path, fingerprints=fingerprints)
+    train_idx, valid_idx, test_idx = random_split_indices(
+        len(X), train_ratio, valid_ratio, test_ratio, split_seed,
+    )
+
+    if fingerprints:
+        return (
+            (X[train_idx], y[train_idx]),
+            (X[valid_idx], y[valid_idx]),
+            (X[test_idx], y[test_idx]),
+        )
+    else:
+        return (
+            ([X[i] for i in train_idx], [y[i] for i in train_idx]),
+            ([X[i] for i in valid_idx], [y[i] for i in valid_idx]),
+            ([X[i] for i in test_idx], [y[i] for i in test_idx]),
+        )
