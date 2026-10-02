@@ -23,23 +23,25 @@ def count_parameters(model: nn.Module) -> tuple[int, int]:
     return total, trainable
 
 
-def count_parameter_categories(model: nn.Module) -> dict[str, int]:
-    """Return trainable number of parameters per category."""
+def count_parameter_categories(model) -> dict[str, dict[str, int]]:
+    """Return number of parameters per category."""
+    category_names = ["self_attn", "feed_forward", "src_embed", "other"]
     categories = {
-        k:0 for k in ["self_attn", "feed_forward", "src_embed", "other"]
+        category: {"total": 0, "trainable": 0} for category in category_names
     }
     for name, param in model.named_parameters():
-        if not param.requires_grad: 
-            continue
         name_lower = name.lower()
         if "self_attn" in name_lower:
-            categories["self_attn"] += param.numel()
+            category = "self_attn"
         elif "feed_forward" in name_lower:
-            categories["feed_forward"] += param.numel()
+            category = "feed_forward"
         elif "src_embed" in name_lower:
-            categories["src_embed"] += param.numel()
+            category = "src_embed"
         else:
-            categories["other"] += param.numel()
+            category = "other"
+        categories[category]["total"] += param.numel()
+        if param.requires_grad:
+            categories[category]["trainable"] += param.numel()
     return categories
 
 
