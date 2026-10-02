@@ -89,6 +89,14 @@ def get_layer_names_linear(
     return names_list
 
 
+def get_layer_names(model: nn.Module, target_layer: str) -> list[str]:
+    return [
+        name
+        for name, _ in model.named_modules()
+        if name and target_layer in name
+    ]
+
+
 def replace_linear_layers(
     model: nn.Module,
     conversion_fn: Callable[[nn.Module], nn.Module],
