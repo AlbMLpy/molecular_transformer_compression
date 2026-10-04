@@ -10,12 +10,13 @@ Code based on:
 import os
 import pickle
 import logging
+from collections.abc import Callable
 
 import torch
 import numpy as np
 import pandas as pd
-from torch.utils.data import Dataset
 from sklearn.metrics import pairwise_distances
+from torch.utils.data import Dataset, DataLoader
 
 from rdkit import Chem
 from rdkit.Chem import AllChem
@@ -669,3 +670,16 @@ def load_split_data(
             ([X[i] for i in valid_idx], [y[i] for i in valid_idx]),
             ([X[i] for i in test_idx], [y[i] for i in test_idx]),
         )
+
+
+def get_loaders(
+    config: dict,
+    load_data: Callable,
+    seed: int,
+) -> tuple[DataLoader, DataLoader, DataLoader]:
+    """Create train, validation, and test DataLoaders for a split."""
+    map_f = lambda x: construct_loader(*x, batch_size=config['batch_size'])
+    train_loader, valid_loader, test_loader = map(
+        map_f, load_data(split_seed=seed),
+    )
+    return train_loader, valid_loader, test_loader
