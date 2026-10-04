@@ -90,6 +90,7 @@ def get_layer_names_linear(
 
 
 def get_layer_names(model: nn.Module, target_layer: str) -> list[str]:
+    """Return names of layers matching a target module name."""
     return [
         name
         for name, _ in model.named_modules()
@@ -122,12 +123,26 @@ def get_module(model: nn.Module, name: str) -> nn.Module:
     return module
 
 
+def train_only_layers(model, layer_names):
+    """Freeze all model parameters except the specified layers."""
+    for param in model.parameters():
+        param.requires_grad = False
+
+    for name in layer_names:
+        layer = get_module(model, name)
+        for param in layer.parameters():
+            param.requires_grad = True
+    return model
+
+
 def update_results_dict(res: dict, **kwargs) -> None:
+    """Append result values to their corresponding dictionary entries."""
     for key, value in kwargs.items():
         res[key].append(value)
 
 
 def create_dir_if_not_exists(directory: str) -> os.PathLike:
+    """Create a directory if it does not already exist."""
     path = Path(directory)
     if not path.exists():
         path.mkdir(parents=True, exist_ok=True)
